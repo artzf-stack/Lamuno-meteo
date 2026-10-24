@@ -242,7 +242,7 @@ details.diag summary{cursor:pointer;font-size:13px;font-weight:600;min-height:32
   <section class="card">
     <details class="diag">
       <summary>Diagnóstico de datos</summary>
-      <p class="hint">Estado de cada llamada a Open-Meteo. Si algo no cuadra, copia este diagnóstico y envíalo. En «Celdas» se ve la celda de cada modelo para cada lugar y la altura del punto según Open-Meteo.</p>
+      <p class="hint">Estado de cada llamada a Open-Meteo. Si algo no cuadra, copia este diagnóstico y envíalo. En «Celdas» se ve la celda de cada modelo para cada lugar y la altura del punto según Open-Meteo. IFS usa una rejilla irregular, así que su celda no se compara con la «más cercana».</p>
       <div class="dg-row">
         <label for="csel">Celda que elige cada modelo</label>
         <select id="csel">
@@ -292,7 +292,8 @@ var CONFIG = {
 var API = 'https://api.open-meteo.com/v1/forecast';
 var CORE_VARS = ['temperature_2m','precipitation','wind_speed_10m','wind_direction_10m','wind_gusts_10m'];
 var RAIN_MIN = 0.1;                 // mm/h a partir de los cuales se cuenta una hora como "con lluvia"
-var COVER_MIN = 0.9;                // fracción de horas que debe cubrir un modelo para mostrar un día o elegirlo como referencia
+var COVER_MIN = 0.9;                // fracción de horas de un día que debe cubrir un modelo para mostrarlo en el resumen por días
+var REF_COVER = 0.75;               // fracción de la ventana que debe cubrir un modelo para elegirlo como referencia automática (AROME llega a 43-51 h según la salida)
 
 // Nubes por capas y minutos de sol: si Open-Meteo rechaza alguna con un 400, se piden de nuevo sin ellas.
 var CLOUD_VARS = ['cloud_cover_low','cloud_cover_mid','cloud_cover_high','sunshine_duration'];
@@ -622,7 +623,7 @@ function modelStats(model){
 }
 function visibleModels(){ return MODELS.filter(function(m){ return m.ok && state.vis[m.id]; }); }
 
-// Modelo de referencia. "Automático": el más detallado (AROME, luego ICON-EU, luego IFS) que cubre la ventana elegida;
+// Modelo de referencia. "Automático": el más detallado (AROME, luego ICON-EU, luego IFS) que cubre al menos el 75 % de la ventana elegida;
 // si ninguno la cubre, el que más horas cubre.
 function refModel(){
   if(state.ref !== 'auto'){
@@ -634,7 +635,7 @@ function refModel(){
     var m = MODEL_BY_ID[order[i]];
     if(!m || !m.ok) continue;
     var c = countIn(ser(m, 'temperature_2m'), N);
-    if(N && c >= COVER_MIN * N) return m;
+    if(N && c >= REF_COVER * N) return m;
     if(c > bc){ bc = c; best = m; }
   }
   return best;
@@ -649,7 +650,7 @@ function pickModel(name){
     seen[m.id] = 1;
     var arr = name === 'cloud_cover' ? (cloudTotal(m) || {}).v : ser(m, name);
     var c = countIn(arr, N);
-    if(c && N && c >= COVER_MIN * N) return m;
+    if(c && N && c >= REF_COVER * N) return m;
     if(c > bc){ bc = c; best = m; }
   }
   return best;
@@ -1235,7 +1236,9 @@ function nearestCell(modelId, p){
   return {la:+(Math.round(p.lat / st) * st).toFixed(4), lo:+(Math.round(p.lon / st) * st).toFixed(4)};
 }
 // Aviso si la celda que usó Open-Meteo no es la más cercana al punto (con «Tierra» puede elegir una vecina).
+var IRREGULAR = {ifs:true};     // IFS 9 km: rejilla gaussiana reducida, sus celdas no caen en una cuadrícula regular de 0,1°
 function cellTag(g){
+  if(IRREGULAR[g.mid]) return '';
   var p = null, st = CELLSTEP[g.mid];
   CONFIG.places.forEach(function(x){ if(x.id === g.place) p = x; });
   if(!p || !st) return '';
@@ -1466,7 +1469,7 @@ function renderNotes(){
   if(!rm){ rn.textContent = ''; pn.textContent = ''; return; }
   var c = countIn(ser(rm, 'temperature_2m'), N);
   var t = state.ref === 'auto' ? 'Referencia automática ahora: ' + rm.name + '. ' : '';
-  if(N && c < N) t += rm.name + ' cubre ' + c + ' de las ' + N + ' h de la ventana: las tarjetas de arriba y la tabla horaria solo cuentan esas horas.';
+  if(N && c < N) t += (state.ref === 'auto' ? 'Cubre ' : rm.name + ' cubre ') + c + ' de las ' + N + ' h de la ventana: las tarjetas de arriba y la tabla horaria solo cuentan esas horas.';
   else if(state.ref === 'auto') t += 'Cubre toda la ventana.';
   rn.textContent = t;
   var shared = MODELS.filter(sameCell).map(function(m){ return m.name; });
