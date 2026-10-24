@@ -145,6 +145,18 @@ details.diag summary{cursor:pointer;font-size:13px;font-weight:600;min-height:32
 #cxMap{height:340px;max-width:100%;border-radius:10px;box-shadow:0 0 0 1px var(--ring);margin-top:8px}
 .leaflet-tooltip.cxt{background:var(--surface);color:var(--ink);border:0;box-shadow:0 0 0 1px var(--ring);padding:2px 5px;font-size:11px;line-height:1.3;text-align:center}
 .diag td.l{text-align:left;white-space:normal}
+.ev{line-height:1.7;white-space:nowrap}
+.ev b{font-weight:600;color:var(--ink)}
+.ev.past,.ev.past b{color:var(--muted)}
+.ev.past b{font-weight:500}
+.cf{display:inline-block;min-width:36px;padding:1px 7px;border-radius:999px;text-align:center;font-weight:600;font-size:12px;line-height:1.5}
+.ev.past .cf{opacity:.6}
+#tideTiles{margin:10px 0 14px}
+.tdl{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:12px;color:var(--muted);margin:8px 0 12px}
+.tdl i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;box-sizing:border-box;vertical-align:-1px;border:2px solid var(--accent)}
+.tdl i.hw{background:var(--accent)}
+.tdl i.lw{background:var(--surface)}
+.tdl i.ln{width:16px;height:0;border-radius:0;border-width:0 0 1px;border-style:dashed;border-color:var(--axis);vertical-align:3px}
 .loading .chart,.loading .tiles,.loading .tbl-wrap{opacity:.65}
 @media (prefers-reduced-motion: no-preference){.chart,.tiles,.tbl-wrap{transition:opacity .2s}}
 </style>
@@ -156,7 +168,7 @@ details.diag summary{cursor:pointer;font-size:13px;font-weight:600;min-height:32
       <img class="logo" src="icon-192.png" width="64" height="64" alt="Casa y hórreo de Lamuño">
       <div>
         <h1>Lamuño, hora a hora</h1>
-        <p class="sub">Cudillero · Asturias · AROME, IFS e ICON-EU · temperatura, lluvia, viento y nubosidad, hasta 7 días</p>
+        <p class="sub">Cudillero · Asturias · AROME, IFS e ICON-EU · temperatura, lluvia, viento, nubosidad y mareas, hasta 7 días</p>
       </div>
     </div>
     <div class="status">
@@ -200,6 +212,16 @@ details.diag summary{cursor:pointer;font-size:13px;font-weight:600;min-height:32
       </div>
     </div>
     <div class="tbl-wrap"><table id="daily" class="dt"></table></div>
+  </section>
+
+  <section class="card">
+    <h2>Mareas</h2>
+    <p class="hint" id="tideHint"></p>
+    <div class="tiles" id="tideTiles"></div>
+    <div class="chart" id="chTide"></div>
+    <p class="tdl"><span><i class="hw"></i>Pleamar</span><span><i class="lw"></i>Bajamar</span><span><i class="ln"></i>Nivel medio</span></p>
+    <div class="tbl-wrap"><table id="tideDays" class="dt"></table></div>
+    <p class="hint" id="tideNote" style="margin-top:10px"></p>
   </section>
 
   <section class="card">
@@ -262,6 +284,10 @@ details.diag summary{cursor:pointer;font-size:13px;font-weight:600;min-height:32
   <p class="foot">
     Datos: Météo-France (AROME), ECMWF (IFS) y DWD (ICON-EU), servidos por
     <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo.com</a> con licencia CC BY 4.0.
+    Mareas: cálculo armónico propio con las constantes de los mareógrafos de Gijón y Brest de la base
+    <a href="https://doi.org/10.17882/109129" target="_blank" rel="noopener">TICON-4</a>
+    (Hart-Davis, Dettmering y Seitz, 2025; Gijón con licencia CC BY-NC 4.0 y Brest con CC BY 4.0), recopiladas en la
+    <a href="https://github.com/openwatersio/tide-database" target="_blank" rel="noopener">base de datos de Open Waters</a>.
     Previsión orientativa. El viento es el del modelo a 10 m y en la costa expuesta suele ser mayor en las rachas.
     Para avisos oficiales (lluvia, viento, costeros) consulta la AEMET.
     Página personal y no oficial.
@@ -716,6 +742,271 @@ function rainAgreement(N){
   }
   return out;
 }
+var TIDE_DEF = {   // velocidad (°/h), coeficientes de Doodson (τ,s,h,p,−N,p′,90°) y correcciones nodales [onda base, factor]
+  'M2':[28.9841042,[2,0,0,0,0,0,0],[['M2',1]]],
+  'N2':[28.4397295,[2,-1,0,1,0,0,0],[['M2',1]]],
+  'S2':[30,[2,2,-2,0,0,0,0],[]],
+  'K2':[30.0821373,[2,2,0,0,0,0,0],[['K2',1]]],
+  '2N2':[27.8953548,[2,-2,0,2,0,0,0],[['M2',1]]],
+  'S1':[15,[1,1,-1,0,0,0,0],[]],
+  'K1':[15.0410686,[1,1,0,0,0,0,-1],[['K1',1]]],
+  'P1':[14.9589314,[1,1,-2,0,0,0,1],[]],
+  'O1':[13.9430356,[1,-1,0,0,0,0,1],[['O1',1]]],
+  'Q1':[13.3986609,[1,-2,0,1,0,0,1],[['O1',1]]],
+  'M1':[14.4966939,[1,0,0,1,0,0,-1],[['M1',1]]],
+  'M4':[57.9682085,[4,0,0,0,0,0,0],[['M2',2]]],
+  'MM':[0.5443747,[0,1,0,-1,0,0,0],[['Mm',1]]],
+  'MF':[1.098033,[0,2,0,0,0,0,0],[['Mf',1]]],
+  'SA':[0.0410686,[0,0,1,0,0,0,0],[]],
+  'SSA':[0.0821373,[0,0,2,0,0,0,0],[]],
+  'T2':[29.9589333,[2,2,-3,0,0,1,0],[]],
+  'J1':[15.5854433,[1,2,0,-1,0,0,-1],[['J1',1]]],
+  'L2':[29.5284789,[2,1,0,-1,0,0,-2],[['L2',1]]],
+  'R2':[30.0410667,[2,2,-1,0,0,-1,-2],[]],
+  '2Q1':[12.8542862,[1,-3,0,2,0,0,1],[['O1',1]]],
+  'MSF':[1.0158958,[0,2,-2,0,0,0,0],[['M2',-1]]],
+  'MSQM':[2.1139287,[0,4,-2,0,0,0,0],[['M2',-1]]],
+  'EP2':[27.4238338,[2,-3,2,1,0,0,0],[['M2',1]]],
+  'M3':[43.4761564,[3,0,0,0,0,0,-2],[['M3',1]]],
+  'MU2':[27.9682085,[2,-2,2,0,0,0,0],[['M2',1]]],
+  'MTM':[1.6424078,[0,3,0,-1,0,0,0],[['Mm',1]]],
+  'NU2':[28.5125832,[2,-1,2,-1,0,0,0],[['M2',1]]],
+  'LAMBDA2':[29.4556253,[2,1,-2,1,0,0,-2],[['M2',1]]],
+  'MN4':[57.4238338,[4,-1,0,1,0,0,0],[['M2',1],['M2',1]]],
+  'MS4':[58.9841042,[4,2,-2,0,0,0,0],[['M2',1]]],
+  'MKS2':[29.0662415,[2,0,2,0,0,0,0],[['M2',1],['K2',1]]],
+  'N4':[56.8794591,[4,-2,0,2,0,0,0],[['M2',2]]],
+  'M6':[86.9523127,[6,0,0,0,0,0,0],[['M2',3]]],
+  'M8':[115.936417,[8,0,0,0,0,0,0],[['M2',4]]],
+  'S4':[60,[4,4,-4,0,0,0,0],[]],
+  'OO1':[16.1391017,[1,3,0,0,0,0,-1],[['K2',1],['O1',-1]]],
+  'S3':[45,[3,3,-3,0,0,0,-2],[]],
+  'MA2':[28.943036,[2,0,-1,0,0,0,0],[]],
+  'MB2':[29.025173,[2,0,1,0,0,0,0],[]],
+  'T3':[44.9589333,[3,3,-4,0,0,0,0],[]],
+  'R3':[45.0410686,[3,3,-2,0,0,0,-1],[['K1',1]]],
+  'RHO1':[13.4715145,[1,-2,2,-1,0,0,1],[['O1',1]]],
+  'SGM':[12.9271398,[1,-3,2,0,0,0,1],[['O1',1]]],
+  '3L2':[29.5331208,[2,1,0,0,0,0,0],[['L2',1]]],
+  '3N2':[28.4350877,[2,-1,0,0,0,0,1],[['M2',1]]],
+  '2SM2':[31.0158958,[2,4,-4,0,0,0,0],[['M2',-1]]],
+  '2MS6':[87.9682085,[6,2,-2,0,0,0,0],[['M2',2]]],
+  '2MK5':[73.009277,[5,1,0,0,0,0,-1],[['M2',2],['K1',1]]],
+  '2MO5':[71.911244,[5,-1,0,0,0,0,1],[['M2',2],['O1',1]]]
+};
+var TIDE_GIJ = {   // Gijón: amplitud (m) y fase (° respecto a UTC)
+  'M2':[1.2883,91.126],
+  'N2':[0.27046,71.491],
+  'S2':[0.44973,123.305],
+  'K2':[0.12783,120.733],
+  '2N2':[0.03798,52.382],
+  'S1':[0.00251,334.423],
+  'K1':[0.06673,70.845],
+  'P1':[0.02098,58.727],
+  'O1':[0.06817,323.251],
+  'Q1':[0.02164,274.4],
+  'M1':[0.00115,298.521],
+  'M4':[0.02044,317.988],
+  'MM':[0.00526,225.123],
+  'MF':[0.00725,191.76],
+  'SA':[0.0478,227.579],
+  'SSA':[0.02888,93.08],
+  'T2':[0.0252,117.18],
+  'J1':[0.00227,109.728],
+  'L2':[0.03115,106.722],
+  'R2':[0.00374,128.976],
+  '2Q1':[0.00414,226.665],
+  'MSF':[0.00472,128.602],
+  'MSQM':[0.00187,267.895],
+  'EP2':[0.01043,25.754],
+  'M3':[0.01184,146.476],
+  'MU2':[0.04466,49.34],
+  'MTM':[0.00126,187.354],
+  'NU2':[0.05145,73.95],
+  'LAMBDA2':[0.00791,96.454],
+  'MN4':[0.0104,273.892],
+  'MS4':[0.00675,21.235],
+  'MKS2':[0.0043,77.81],
+  'N4':[0.00275,223.692],
+  'M6':[0.00327,119.96],
+  'M8':[0.00055,245.952],
+  'S4':[0.00101,94.724],
+  'OO1':[0.00109,216.956],
+  'S3':[0.00145,288.757],
+  'MA2':[0.00443,33.803],
+  'MB2':[0.00408,90.139],
+  'T3':[0.00331,292.794],
+  'R3':[0.0036,30.427],
+  'RHO1':[0.00379,278.529],
+  'SGM':[0.00425,234.09],
+  '3L2':[0.0052,349.374],
+  '3N2':[0.00157,287.53],
+  '2SM2':[0.00136,329.146],
+  '2MS6':[0.00244,171.681],
+  '2MK5':[0.00045,89.549],
+  '2MO5':[0.00031,13.958]
+};
+var TIDE_BRE = {   // Brest, solo ondas semidiurnas (para el coeficiente)
+  'M2':[2.0511,108.993],
+  'N2':[0.41694,90.618],
+  'S2':[0.74891,148.282],
+  'K2':[0.21368,145.89],
+  '2N2':[0.05703,72.807],
+  'T2':[0.04169,138.562],
+  'L2':[0.06387,102.92],
+  'R2':[0.00534,157.872],
+  'EP2':[0.01969,89.435],
+  'MU2':[0.08572,105.072],
+  'NU2':[0.07778,86.6],
+  'LAMBDA2':[0.02627,75.818],
+  'MKS2':[0.0076,174.815],
+  'MA2':[0.01102,39.45],
+  'MB2':[0.01244,101.15],
+  '3L2':[0.00825,6.721],
+  '3N2':[0.00217,308.506],
+  '2SM2':[0.01731,312.051]
+};
+var TIDE_BRE_NAMES = ['M2','N2','S2','K2','2N2','T2','L2','R2','EP2','MU2','NU2','LAMBDA2','MKS2','MA2','MB2','3L2','3N2','2SM2'];
+var TIDE_GIJ_NAMES = ['M2','N2','S2','K2','2N2','S1','K1','P1','O1','Q1','M1','M4','MM','MF','SA','SSA','T2','J1','L2','R2','2Q1','MSF','MSQM','EP2','M3','MU2','MTM','NU2','LAMBDA2','MN4','MS4','MKS2','N4','M6','M8','S4','OO1','S3','MA2','MB2','T3','R3','RHO1','SGM','3L2','3N2','2SM2','2MS6','2MK5','2MO5'];
+
+/* ================= Mareas ================= */
+/* Predicción armónica propia, sin conexión: suma de ondas con las constantes del mareógrafo de Gijón (TICON-4,
+   GESLA-4) y correcciones nodales IHO. Es la misma fórmula que usan las tablas de mareas; no incluye el efecto
+   del tiempo (presión, viento, oleaje). El coeficiente sigue la definición del SHOM: marnage semidiurno de
+   Brest dividido por 6,10 m (por 100), con las constantes de Brest. */
+var TIDE = {
+  place:'Cudillero',
+  ref:'Gijón',
+  datum:2.60,        // m entre el nivel medio y el cero de las tablas de Gijón (contrastado con la tabla publicada de nov. 2026)
+  unit:3.05          // semi-marnage (m) que corresponde a coeficiente 100
+};
+var D2R = Math.PI / 180;
+var ASTRO_POLY = {
+  s:[218.3164591, 481267.88134236, -0.0013268, 1 / 538841 - 1 / 65194000],
+  h:[280.46645, 36000.76983, 0.0003032],
+  p:[83.353243, 4069.0137111, -0.0103238, -1 / 80053, 1 / 18999000],
+  N:[125.044555, -1934.1361849, 0.0020762, 1 / 467410, -1 / 60616000],
+  pp:[280.46645 - 357.5291, 36000.76932 - 35999.0503, 0.0003032 + 0.0001559, 0.00000048]
+};
+function polyAt(c, T){ var r = 0, p = 1; for(var i = 0; i < c.length; i++){ r += c[i] * p; p *= T; } return r; }
+function mod360(x){ return ((x % 360) + 360) % 360; }
+function astroAt(ms){
+  var jd = ms / 86400000 + 2440587.5, T = (jd - 2451545) / 36525;
+  var a = {s:mod360(polyAt(ASTRO_POLY.s, T)), h:mod360(polyAt(ASTRO_POLY.h, T)), p:mod360(polyAt(ASTRO_POLY.p, T)),
+           N:mod360(polyAt(ASTRO_POLY.N, T)), pp:mod360(polyAt(ASTRO_POLY.pp, T))};
+  a.tau = (jd - Math.floor(jd)) * 360 + a.h - a.s;
+  return a;
+}
+// Correcciones nodales (IHO): f = factor de amplitud, u = adelanto de fase en grados.
+function sinCos(fs, fc){ return {f:Math.sqrt(fs * fs + fc * fc), u:Math.atan2(fs, fc) / D2R}; }
+var TIDE_FUND = {
+  M2:function(a){ var N = a.N * D2R; return {f:1.0007 - 0.0373 * Math.cos(N) + 0.0002 * Math.cos(2 * N), u:-2.14 * Math.sin(N)}; },
+  K2:function(a){ var N = a.N * D2R; return {f:1.0246 + 0.2863 * Math.cos(N) + 0.0083 * Math.cos(2 * N) - 0.0015 * Math.cos(3 * N),
+                                         u:-17.74 * Math.sin(N) + 0.68 * Math.sin(2 * N) - 0.04 * Math.sin(3 * N)}; },
+  K1:function(a){ var N = a.N * D2R; return {f:1.006 + 0.115 * Math.cos(N) - 0.0088 * Math.cos(2 * N) + 0.0006 * Math.cos(3 * N),
+                                         u:-8.86 * Math.sin(N) + 0.68 * Math.sin(2 * N) - 0.07 * Math.sin(3 * N)}; },
+  O1:function(a){ var N = a.N * D2R; return {f:1.0176 + 0.1871 * Math.cos(N) - 0.0147 * Math.cos(2 * N),
+                                         u:10.8 * Math.sin(N) - 1.34 * Math.sin(2 * N) + 0.19 * Math.sin(3 * N)}; },
+  J1:function(a){ var N = a.N * D2R; return {f:1.1029 + 0.1676 * Math.cos(N) - 0.017 * Math.cos(2 * N) + 0.0016 * Math.cos(3 * N),
+                                         u:-12.94 * Math.sin(N) + 1.34 * Math.sin(2 * N) - 0.19 * Math.sin(3 * N)}; },
+  Mm:function(a){ var N = a.N * D2R, p = a.p * D2R; return {f:1 - 0.1311 * Math.cos(N) + 0.0538 * Math.cos(2 * p) + 0.0205 * Math.cos(2 * p - N), u:0}; },
+  Mf:function(a){ var N = a.N * D2R; return {f:1.084 + 0.415 * Math.cos(N) + 0.039 * Math.cos(2 * N),
+                                         u:-23.7 * Math.sin(N) + 2.7 * Math.sin(2 * N) - 0.4 * Math.sin(3 * N)}; },
+  M3:function(a){ var N = a.N * D2R, m = TIDE_FUND.M2(a); return {f:Math.pow(Math.sqrt(m.f), 3), u:-3.21 * Math.sin(N)}; },
+  M1:function(a){ var N = a.N * D2R, p = a.p * D2R;
+                  return sinCos(Math.sin(p) + 0.2 * Math.sin(p - N), 2 * (Math.cos(p) + 0.2 * Math.cos(p - N))); },
+  L2:function(a){ var N = a.N * D2R, p = a.p * D2R;
+                  return sinCos(-0.2505 * Math.sin(2 * p) - 0.1102 * Math.sin(2 * p - N) - 0.0156 * Math.sin(2 * p - 2 * N) - 0.037 * Math.sin(N),
+                                1 - 0.2505 * Math.cos(2 * p) - 0.1102 * Math.cos(2 * p - N) - 0.0156 * Math.cos(2 * p - 2 * N) - 0.037 * Math.cos(N)); }
+};
+// Parámetros {A, w, phi} de cada onda para el tramo que empieza en t0 (ms UTC): el nivel es la suma de A·cos(w·h + phi), con h en horas desde t0.
+function tideParams(consts, names, t0){
+  var a0 = astroAt(t0), am = astroAt(t0 + 12 * 3600000), fc = {};
+  var V = [a0.tau, a0.s, a0.h, a0.p, -a0.N, a0.pp, 90], out = [];
+  names.forEach(function(n){
+    var d = TIDE_DEF[n], c = d[1], v0 = 0, f = 1, u = 0, i;
+    for(i = 0; i < 7; i++) v0 += c[i] * V[i];
+    d[2].forEach(function(e){
+      var r = fc[e[0]] || (fc[e[0]] = TIDE_FUND[e[0]](am));
+      u += e[1] * r.u; f *= Math.pow(r.f, Math.abs(e[1]));
+    });
+    out.push({A:consts[n][0] * f, w:d[0] * D2R, phi:(v0 + u - consts[n][1]) * D2R});
+  });
+  return out;
+}
+var TIDE_CACHE = {};
+function tideChunk(day){            // día UTC (número de días desde 1970)
+  var P = TIDE_CACHE[day];
+  if(!P){
+    if(Object.keys(TIDE_CACHE).length > 40) TIDE_CACHE = {};
+    P = TIDE_CACHE[day] = tideParams(TIDE_GIJ, TIDE_GIJ_NAMES, day * 86400000);
+  }
+  return P;
+}
+// Altura (m sobre el nivel medio) y su derivada (m/h) en el instante ms.
+function tideLevel(ms){
+  var day = Math.floor(ms / 86400000), P = tideChunk(day), h = (ms - day * 86400000) / 3600000, s = 0;
+  for(var i = 0; i < P.length; i++) s += P[i].A * Math.cos(P[i].w * h + P[i].phi);
+  return s;
+}
+function tideSlope(ms){
+  var day = Math.floor(ms / 86400000), P = tideChunk(day), h = (ms - day * 86400000) / 3600000, s = 0;
+  for(var i = 0; i < P.length; i++) s -= P[i].A * P[i].w * Math.sin(P[i].w * h + P[i].phi);
+  return s;
+}
+// Pleamares y bajamares entre from y to (ms). Busca cambios de signo de la pendiente cada 10 min y afina por bisección.
+function tideExtremes(from, to){
+  var STEP = 600000, ex = [], t = from, d0 = tideSlope(t), d1, lo, hi, mid, dm, k;
+  for(; t < to; t += STEP){
+    d1 = tideSlope(t + STEP);
+    if((d0 > 0 && d1 <= 0) || (d0 < 0 && d1 >= 0)){
+      lo = t; hi = t + STEP;
+      for(k = 0; k < 24; k++){ mid = (lo + hi) / 2; dm = tideSlope(mid); if((dm > 0) === (d0 > 0)) lo = mid; else hi = mid; }
+      mid = (lo + hi) / 2;
+      ex.push({t:mid, h:tideLevel(mid), high:d0 > 0});
+    }
+    d0 = d1;
+  }
+  // un par de extremos que difiere menos de 1 cm es una oscilación falsa, no una marea
+  var changed = true;
+  while(changed){
+    changed = false;
+    for(k = 0; k + 1 < ex.length; k++){
+      if(Math.abs(ex[k].h - ex[k + 1].h) < 0.01){ ex.splice(k, 2); changed = true; break; }
+    }
+  }
+  return ex;
+}
+// Coeficiente de marea (SHOM): 100 × semi-marnage semidiurno de Brest / 3,05 m, con todas las ondas de la especie 2.
+function tideCoef(ms){
+  var P = tideParams(TIDE_BRE, TIDE_BRE_NAMES, ms), re = 0, im = 0;
+  P.forEach(function(q){ re += q.A * Math.cos(q.phi); im += q.A * Math.sin(q.phi); });
+  return 100 * Math.hypot(re, im) / TIDE.unit;
+}
+function coefWord(c){ return c <= 45 ? 'muerta' : c <= 70 ? 'media' : c <= 95 ? 'viva' : 'muy viva'; }
+
+/* ---- Hora local de Madrid (con el cambio de hora) ---- */
+var TZF = null;
+function tzParts(ms){
+  var o = {};
+  try{
+    if(!TZF) TZF = new Intl.DateTimeFormat('en-GB', {timeZone:CONFIG.tz, hourCycle:'h23', year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'});
+    TZF.formatToParts(new Date(ms)).forEach(function(p){ o[p.type] = +p.value; });
+    return {y:o.year, mo:o.month - 1, d:o.day, h:o.hour % 24, mi:o.minute};
+  }catch(e){
+    var d = new Date(ms);
+    return {y:d.getFullYear(), mo:d.getMonth(), d:d.getDate(), h:d.getHours(), mi:d.getMinutes()};
+  }
+}
+function tzOffset(ms){ var q = tzParts(ms); return Date.UTC(q.y, q.mo, q.d, q.h, q.mi) - Math.floor(ms / 60000) * 60000; }
+function localToMs(y, mo, d, h, mi){
+  var g = Date.UTC(y, mo, d, h, mi || 0), ms = g - tzOffset(g), o2 = tzOffset(ms);
+  if(o2 !== g - ms) ms = g - o2;
+  return ms;
+}
+function localIso(ms){ var q = tzParts(ms); return q.y + '-' + pad(q.mo + 1) + '-' + pad(q.d) + 'T' + pad(q.h) + ':' + pad(q.mi); }
+function clockOf(ms){ var q = tzParts(ms); return pad(q.h) + ':' + pad(q.mi); }
+function dowOf(q){ return new Date(q.y, q.mo, q.d).getDay(); }
 
 /* ================= Gráficos ================= */
 var DOW1 = ['D','L','M','X','J','V','S'];
@@ -736,7 +1027,7 @@ function xTickList(times, N, pw){
     if(t.h === 0){ out.push({i:i, label:dl(t), major:true}); continue; }
     if(!step || t.h % step !== 0) continue;
     var back = (i - t.h >= 0) ? t.h * gph : (edge ? i * gph : 1e9);   // distancia a la etiqueta de día anterior
-    if(back < labelW + 2) continue;
+    if(back < labelW + 8) continue;
     if(i + (24 - t.h) < N && (24 - t.h) * gph < 16) continue;         // demasiado cerca de la siguiente medianoche
     out.push({i:i, label:t.h + unit, major:false});
   }
@@ -1225,6 +1516,137 @@ function renderHourly(){
   }
 }
 
+/* ===== Mareas: vista ===== */
+var TIDE_VIEW = {key:'', data:null};
+// Instante de inicio de la ventana: la primera hora de la previsión, o la hora actual si aún no hay datos meteorológicos.
+function tideStartMs(){
+  if(MASTER.length){ var t = parseT(MASTER[0]); return localToMs(t.y, t.mo, t.d, t.h, 0); }
+  return Math.floor(Date.now() / 3600000) * 3600000;
+}
+function tideView(){
+  var t0 = tideStartMs(), N = state.win, key = t0 + '|' + N;
+  if(TIDE_VIEW.key === key) return TIDE_VIEW.data;
+  var q0 = tzParts(t0), q1 = tzParts(t0 + N * 3600000 - 1);
+  var ds = localToMs(q0.y, q0.mo, q0.d, 0), de = localToMs(q1.y, q1.mo, q1.d + 1, 0);
+  var ex = tideExtremes(ds - 4 * 3600000, de + 4 * 3600000).filter(function(e){ return e.t >= ds && e.t < de; });
+  ex.forEach(function(e){ e.z = e.h + TIDE.datum; if(e.high) e.coef = tideCoef(e.t); });
+  var curve = [], k;
+  for(k = 0; k <= N * 6; k++) curve.push(tideLevel(t0 + k * 600000) + TIDE.datum);
+  var data = {t0:t0, N:N, ds:ds, de:de, ex:ex, curve:curve};
+  TIDE_VIEW = {key:key, data:data};
+  return data;
+}
+function etaText(ms, now){
+  var m = Math.max(0, Math.round((ms - now) / 60000)), h = Math.floor(m / 60);
+  return 'en ' + (h ? h + ' h ' + (m % 60) + ' min' : m + ' min');
+}
+function coefStyle(el, c){
+  el.style.background = 'color-mix(in srgb, var(--accent) ' + Math.round(8 + clamp((c - 20) / 100, 0, 1) * 52) + '%, transparent)';
+}
+// Tres tarjetas: próxima pleamar, próxima bajamar y coeficiente de hoy. Se calculan con la hora actual, no con la de la última descarga.
+function renderTideTiles(host){
+  var now = Date.now(), q = tzParts(now);
+  var ds = localToMs(q.y, q.mo, q.d, 0), de = localToMs(q.y, q.mo, q.d + 1, 0);
+  var ex = tideExtremes(ds - 4 * 3600000, de + 18 * 3600000), nextH = null, nextL = null, i;
+  for(i = 0; i < ex.length; i++){
+    if(ex[i].t <= now) continue;
+    if(ex[i].high && !nextH) nextH = ex[i];
+    if(!ex[i].high && !nextL) nextL = ex[i];
+  }
+  var rising = nextH && nextL ? nextH.t < nextL.t : !!nextH;
+  function sub(e, st){
+    if(!e) return '';
+    return (st ? st + ' · ' : '') + fmt(e.h + TIDE.datum, 1) + ' m · ' + etaText(e.t, now);
+  }
+  tile(host, nextH && nextH.t >= de ? 'Pleamar de mañana' : 'Próxima pleamar', nextH ? clockOf(nextH.t) : '–', '', sub(nextH, rising ? 'sube ahora' : ''));
+  tile(host, nextL && nextL.t >= de ? 'Bajamar de mañana' : 'Próxima bajamar', nextL ? clockOf(nextL.t) : '–', '', sub(nextL, rising ? '' : 'baja ahora'));
+  var cs = ex.filter(function(e){ return e.high && e.t >= ds && e.t < de; }).map(function(e){ return Math.round(tideCoef(e.t)); });
+  if(cs.length){
+    var avg = Math.round(cs.reduce(function(a, b){ return a + b; }, 0) / cs.length);
+    tile(host, 'Coeficiente hoy', String(avg), '', 'marea ' + coefWord(avg) + (cs.length > 1 ? ' · ' + cs.join(' y ') : ''));
+  }
+}
+function renderTides(){
+  var host = $('chTide'), tb = $('tideDays'), tt = $('tideTiles');
+  clear(host); clear(tb); clear(tt);
+  $('tideHint').textContent = 'Pleamares y bajamares en ' + TIDE.place + ', calculadas en esta misma página con las constantes del mareógrafo de ' + TIDE.ref +
+    ' (no necesitan conexión). Es la misma marea para Casa y Playa de San Pedro. Alturas en metros sobre el cero de las tablas, de forma aproximada.';
+  try{
+    var v = tideView(), N = v.N, i;
+    renderTideTiles(tt);
+    var mn = Infinity, mx = -Infinity;
+    v.curve.forEach(function(z){ if(z < mn) mn = z; if(z > mx) mx = z; });
+    var y = niceScale(mn - 0.3, mx + 0.3, 5);
+    var times = [];
+    for(i = 0; i <= N; i++) times.push(localIso(v.t0 + i * 3600000));
+    var c = baseChart(host, {height:230, n:N + 1, times:times, y:y, left:36, yFmt:function(vv){ return fmt(vv, vv % 1 ? 1 : 0); },
+                             aria:'Altura de la marea por hora en ' + TIDE.place});
+    var g = c.g, X = function(hr){ return g.l + hr / N * g.pw; };
+    // nivel medio
+    var ym = g.yOf(TIDE.datum);
+    if(ym > g.t && ym < g.t + g.ph) S('line', {'class':'zl', x1:g.l, x2:g.l + g.pw, y1:ym, y2:ym, 'stroke-dasharray':'4 4'}, c.svg);
+    var d = '', area = '';
+    v.curve.forEach(function(z, k){ d += (k ? 'L' : 'M') + X(k / 6).toFixed(1) + ' ' + g.yOf(z).toFixed(1); });
+    area = d + 'L' + X(N).toFixed(1) + ' ' + (g.t + g.ph) + 'L' + X(0).toFixed(1) + ' ' + (g.t + g.ph) + 'Z';
+    var ar = S('path', {d:area, stroke:'none'}, c.svg); ar.style.fill = 'var(--accent)'; ar.style.fillOpacity = '0.13';
+    var ln = S('path', {d:d, fill:'none', 'stroke-width':2, 'stroke-linejoin':'round', 'stroke-linecap':'round'}, c.svg); ln.style.stroke = 'var(--accent)';
+    var showLab = g.pw / N * 12.4 >= 42;            // ¿caben las horas entre dos pleamares seguidas?
+    v.ex.forEach(function(e){
+      var hr = (e.t - v.t0) / 3600000;
+      if(hr < 0 || hr > N) return;
+      var x = X(hr), yy = g.yOf(e.z);
+      var dot = S('circle', {cx:x, cy:yy, r:4.5, 'stroke-width':2}, c.svg);
+      dot.style.fill = e.high ? 'var(--accent)' : 'var(--surface)'; dot.style.stroke = e.high ? 'var(--surface)' : 'var(--accent)';
+      if(showLab){
+        var tx = S('text', {'class':'axm', x:x, y:e.high ? yy - 9 : yy + 17, 'text-anchor':x < g.l + 16 ? 'start' : x > g.l + g.pw - 16 ? 'end' : 'middle'}, c.svg);
+        tx.textContent = clockOf(e.t);
+      }
+    });
+    attachHover(host, c.svg, g, function(i){
+      var ms = v.t0 + i * 3600000, z = tideLevel(ms) + TIDE.datum;
+      var items = [{color:'var(--accent)', name:'Altura', value:fmt(z, 1) + ' m · ' + (tideSlope(ms) > 0 ? 'sube' : 'baja')}];
+      v.ex.forEach(function(e){
+        if(Math.abs(e.t - ms) <= 30 * 60000) items.push({color:null, name:e.high ? 'Pleamar' : 'Bajamar',
+          value:clockOf(e.t) + ' · ' + fmt(e.z, 1) + ' m' + (e.high ? ' · coef. ' + Math.round(e.coef) : '')});
+      });
+      return {title:fmtHour(times[i]), items:items};
+    });
+
+    // Tabla por días
+    var head = H('tr', null, null, H('thead', null, null, tb));
+    ['Día', 'Pleamares ▲', 'Bajamares ▼', 'Coef.'].forEach(function(t){ H('th', null, t, head); });
+    var body = H('tbody', null, null, tb), now = Date.now(), q = tzParts(v.ds), k;
+    for(k = 0; k < 10; k++){
+      var s = localToMs(q.y, q.mo, q.d + k, 0), e2 = localToMs(q.y, q.mo, q.d + k + 1, 0);
+      if(s >= v.de) break;
+      var dq = tzParts(s), evs = v.ex.filter(function(e){ return e.t >= s && e.t < e2; });
+      var tr = H('tr', null, null, body), dc = H('td', null, DOW[dowOf(dq)] + ' ' + dq.d + ' ' + MON[dq.mo], tr);
+      if(k < 2) H('small', null, k === 0 ? 'hoy' : 'mañana', dc);
+      var hc = H('td', null, null, tr), lc = H('td', null, null, tr), cc = H('td', null, null, tr);
+      evs.forEach(function(e){
+        var cls = 'ev' + (e.t < now ? ' past' : '');
+        var row = H('div', {'class':cls}, null, e.high ? hc : lc);
+        H('b', null, clockOf(e.t), row);
+        row.appendChild(document.createTextNode(' ' + fmt(e.z, 1) + ' m'));
+        if(e.high){
+          var cr = H('div', {'class':cls}, null, cc), cv = Math.round(e.coef);
+          var pill = H('span', {'class':'cf', title:'Marea ' + coefWord(cv)}, String(cv), cr);
+          coefStyle(pill, cv);
+        }
+      });
+      [hc, lc, cc].forEach(function(td){ if(!td.firstChild){ td.textContent = '–'; td.className = 'muted'; } });
+    }
+    $('tideNote').textContent = 'Coeficiente de marea (20 a 120, como en las tablas francesas; se calcula igual que el SHOM, con la marea de Brest): hasta 45 muerta · 46 a 70 media · 71 a 95 viva · más de 95 muy viva. ' +
+      'Es una predicción astronómica: no incluye la presión ni el viento, que pueden cambiar la altura real unos 20 a 40 cm. ' +
+      TIDE.place + ' queda a unos 40 km de ' + TIDE.ref + ', así que la hora puede variar unos minutos (margen habitual de ±10 min y ±0,2 m). ' +
+      'Contrastado con la tabla publicada de ' + TIDE.ref + ' para noviembre de 2026: horas con diferencias típicas de 4 min y alturas dentro de ±5 cm.';
+  }catch(err){
+    clear(host); clear(tb); clear(tt);
+    H('p', {'class':'hint'}, 'No se ha podido calcular la marea en este navegador.', host);
+    if(window.console && console.error) console.error(err);
+  }
+}
+
 /* ================= Diagnóstico ================= */
 function placeLabel(id){
   for(var i = 0; i < CONFIG.places.length; i++){ if(CONFIG.places[i].id === id) return CONFIG.places[i].label; }
@@ -1516,7 +1938,7 @@ function renderAll(){
   renderPending = true;
   var run = function(){
     renderPending = false;
-    renderUpdated(); renderBanner(); renderNotes(); renderTiles(); renderDaily(); renderCompare();
+    renderUpdated(); renderBanner(); renderNotes(); renderTiles(); renderDaily(); renderTides(); renderCompare();
     renderTemp(); renderPrecip(); renderSky(); renderWind(); renderHourly(); renderDiag();
   };
   if(typeof requestAnimationFrame === 'function') requestAnimationFrame(run); else run();
